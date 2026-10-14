@@ -14,7 +14,9 @@ const MIME = {
 };
 
 function serveStatic(res, pathname) {
-  const file = path.normalize(path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname));
+  // /app (public ordering) and /pos (cashier) are direct links into the same single-page app.
+  const page = ['/', '/app', '/app/', '/pos', '/pos/'].includes(pathname);
+  const file = path.normalize(path.join(PUBLIC_DIR, page ? 'index.html' : pathname));
   if (!file.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
     return res.end('Forbidden');

@@ -115,6 +115,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
 .toast.error { background: var(--danger); color: #fff; }
 
 /* launcher */
+.launch-stack { display: grid; gap: 14px; max-width: 560px; }
 .launch-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
 .launch { display: block; padding: 20px; text-decoration: none; color: inherit; transition: transform .1s; }
 .launch:hover { transform: translateY(-2px); }

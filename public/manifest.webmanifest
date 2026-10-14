@@ -1,7 +1,7 @@
 {
   "name": "MichEats",
   "short_name": "MichEats",
-  "start_url": "/#/order",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#2563eb",

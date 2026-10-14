@@ -38,18 +38,28 @@ The terminal prints two addresses: one for this computer and one for other devic
 
 ## Screens (one device each)
 
+The main address (`/`) is the staff launcher. It lists only **Cashier POS**, **Preparation display**, and
+**Admin**, top to bottom. Staff screens have no menu links to each other; tap the logo to get back to the launcher.
+
 | Screen | URL | Used by |
 |---|---|---|
+| **Public ordering app** | **`/app`** | Students' phones / Android app. Give this link to the public. It only shows ordering and order tracking. |
 | Self-service kiosk | `/#/kiosk` | Students and teachers (touchscreen) |
-| Phone ordering | `/#/order` | Students (Android app) |
-| Track order | `/#/track` | Students |
-| Cashier POS | `/#/pos` | Cashier (PIN) |
+| Cashier POS | `/pos` (direct) or `/#/pos` | Cashier (PIN) |
 | Preparation display | `/#/kitchen` | Canteen staff (PIN) |
 | Public display | `/#/display` | TV / monitor facing the line |
-| Admin & research | `/#/admin` | Researchers / admin (PIN) |
+| Admin | `/#/admin` | Admin (PIN): add and edit menu items, orders, settings, research |
+
+Admin → Settings lists the full link for each device.
 
 The kiosk and the public display run full-screen with no menu bar. To leave either one,
-**triple-tap the top-left corner**. Put the kiosk browser in full-screen mode (F11, or Chrome's kiosk mode).
+**triple-tap the top-left corner** (it opens the launcher). Put the kiosk browser in full-screen mode (F11, or Chrome's kiosk mode).
+
+### Ordering (app and kiosk)
+Before confirming, customers can enter their own **ID** (student ID or nickname) and pick their own
+**order number** (letters and numbers, up to 8). Both are optional; leave the number blank to get the next
+automatic one. A number already used today is rejected. After ordering, the screen shows the order's live
+progress: received → preparing → ready for pickup → claimed.
 
 ### Cashier POS
 - **Collect payment**: type the student's order number and press Enter. Tap a bill (₱20 to ₱1000) or
@@ -67,15 +77,15 @@ Payment is cash only, as defined in the study's scope (no digital payments, inve
 3. The **Before vs during** table answers SOP 2.1–2.3: mean ± SD for each phase, % change, and
    Welch's t-test (α = 0.05) for significance.
 4. The system also logs data automatically: kiosk transaction time (first item tapped → order confirmed),
-   wait until ready, wait until claimed, and per-day order counts by strand.
+   wait until ready, wait until claimed, and per-day order counts by strand (now usually "Unspecified").
 5. **Export CSV** files open in Excel, Google Sheets, or SPSS.
 
-Kiosk users may optionally choose their strand (HUMSS, ABM, STEM…). No names are collected,
-in line with the study's ethical considerations.
+Customers may optionally enter an ID of their choice; it appears in the orders CSV as `customer_id`.
+Strand is no longer asked.
 
 ## Android app (APK)
 
-`/#/order` is a mobile-friendly web app with a web manifest. To make an APK, wrap the server URL
+`/app` is a mobile-friendly web app with a web manifest. To make an APK, wrap `https://<your-site>/app`
 in a WebView using any website-to-APK tool (e.g. Android Studio WebView template, or Bubblewrap
 for a Trusted Web Activity). Students can also just open the URL in Chrome and choose **Add to Home screen**.
 

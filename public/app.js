@@ -32,6 +32,22 @@ const statusBadge = (o) => `<span class="badge ${STATUS_BADGE[o.status]}">${STAT
 const payBadge = (o) => (o.paid ? '<span class="badge ok">Paid</span>' : '<span class="badge danger">Unpaid</span>');
 const todayOrders = () => (S.state ? S.state.orders : []);
 const findOrder = (id) => todayOrders().find((o) => o.id === id);
+const custId = (o) => (o.customerId ? ' · ID ' + esc(o.customerId) : '');
+const codeMatches = (o, q) => o.code === q.toUpperCase() || (o.number != null && o.number === Number(q));
+// Direct links: /app is the public ordering app (order + track only), /pos opens straight into the cashier.
+const LOCKED = { app: ['order', 'track'], pos: ['pos'] }[location.pathname.replace(/^\/|\/$/g, '')] || null;
+
+function progress(o) {
+  if (o.status === 'cancelled') return '<p>This order was cancelled. Please ask the cashier.</p>';
+  const idx = ['received', 'preparing', 'ready', 'completed'].indexOf(o.status);
+  const ahead = todayOrders().filter((x) => ['received', 'preparing'].includes(x.status) && x.createdAt < o.createdAt).length;
+  const steps = ['Order received', 'Preparing', 'Ready for pickup', 'Claimed'];
+  return `
+    <div class="steps">${steps.map((s, i) => `<div class="step ${i <= idx ? 'done' : ''}"><span class="dot">${i < idx ? '✓' : i + 1}</span>${s}</div>`).join('')}</div>
+    ${o.status === 'ready' ? '<h2 style="color:var(--ok)">Your food is ready — claim it at the counter!</h2>' : ''}
+    ${['received', 'preparing'].includes(o.status) ? `<p class="muted">${ahead ? `${ahead} order${ahead > 1 ? 's' : ''} ahead of you` : "You're next in line"}</p>` : ''}
+    ${!o.paid ? `<p><b>Please pay ${peso(o.total)} at the cashier.</b></p>` : ''}`;
+}
 
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
@@ -150,7 +166,7 @@ function pinGate() {
       <p class="muted">Enter the canteen staff PIN to open this screen.</p>
       <input id="pin" class="input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" required>
       <button class="btn primary block">Unlock</button>
-      <a href="#/" class="muted">← Back</a>
+      ${LOCKED ? '' : '<a href="#/" class="muted">← Back</a>'}
     </form>`;
 }
 
@@ -288,42 +304,37 @@ function cartActions(v, onStart) {
 
 function HomeView() {
   const screens = [
-    ['#/kiosk', '🖥️', 'Self-service kiosk', 'Touchscreen ordering for students and teachers. Runs full-screen in the canteen.'],
-    ['#/order', '📱', 'Order on phone', 'Same ordering flow for the Android app, with ready notifications.'],
-    ['#/track', '🔎', 'Track an order', 'Look up an order number and see its live status.'],
     ['#/pos', '💵', 'Cashier POS', 'Collect cash for kiosk orders, ring up walk-in orders, print receipts, hand over food.'],
     ['#/kitchen', '👩‍🍳', 'Preparation display', 'Incoming orders for the canteen staff. Tap to start and mark ready.'],
-    ['#/display', '📺', 'Public order display', 'Big-screen board showing Preparing and Ready for Pickup numbers.'],
-    ['#/admin', '⚙️', 'Admin & research', 'Menu, orders, settings, and queue / timing data collection for the study.'],
+    ['#/admin', '⚙️', 'Admin', 'Add and edit menu items, see orders, settings, and research data.'],
   ];
   return {
     render: () => `
       <div class="page stack">
         <div class="hero">
-          <h1>${esc(S.state.settings.canteenName)} canteen system</h1>
-          <p>Order at the kiosk → pay at the cashier → kitchen prepares → your number appears on the display → claim your food.</p>
+          <h1>${esc(S.state.settings.canteenName)} staff</h1>
+          <p>Choose the screen for this device.</p>
         </div>
-        <div class="launch-grid">
+        <div class="launch-stack">
           ${screens.map(([href, ico, title, desc]) => `
             <a class="card launch" href="${href}">
               <div class="ico">${ico}</div><h3>${title}</h3><p>${desc}</p>
             </a>`).join('')}
         </div>
-        <p class="muted" style="font-size:13px">Tip: open each screen on its own device. Kiosk and display screens hide the menu bar; triple-tap the top-left corner to leave them.</p>
+        <p class="muted" style="font-size:13px">Kiosk, public display, and the public ordering app links are in Admin → Settings.</p>
       </div>`,
   };
 }
 
 function OrderView(mode) {
   const kiosk = mode === 'kiosk';
-  const v = { data: { search: '', strand: '' }, cat: 'All', cart: {}, startedAt: null, step: 'menu', placed: null, cartOpen: false, placing: false };
+  const v = { data: { search: '', customerId: '', code: '' }, cat: 'All', cart: {}, startedAt: null, step: 'menu', placed: null, cartOpen: false, placing: false };
   const c = cartModel(v);
   const RESET_MS = 20000;
 
   function reset() {
     Object.assign(v, { cart: {}, startedAt: null, step: 'menu', placed: null, cartOpen: false, cat: 'All' });
-    v.data.search = '';
-    v.data.strand = '';
+    Object.assign(v.data, { search: '', customerId: '', code: '' });
     clearTimeout(v.doneTimer);
     render();
   }
@@ -367,13 +378,16 @@ function OrderView(mode) {
           ${c.lines().map(({ item, qty }) => `<tr><td>${qty} × ${esc(item.emoji)} ${esc(item.name)}</td><td class="r num">${peso(item.price * qty)}</td></tr>`).join('')}
         </table>
         <div class="total-row num"><span>Total</span><span>${peso(c.total())}</span></div>
-        <label class="field">
-          <span>Your strand or group (optional, used only for the canteen study — no names are collected)</span>
-          <select id="strand" class="input" data-bind="strand">
-            <option value="">Prefer not to say</option>
-            ${S.state.strands.map((s) => `<option ${v.data.strand === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}
-          </select>
-        </label>
+        <div class="grid-2" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+          <label class="field">
+            <span>Your ID (optional, e.g. student ID or nickname)</span>
+            <input id="customerId" class="input" maxlength="30" data-bind="customerId" value="${esc(v.data.customerId)}" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>Your own order number (optional, letters and numbers, up to 8)</span>
+            <input id="ordercode" class="input num" maxlength="8" placeholder="Leave blank for automatic" data-bind="code" value="${esc(v.data.code)}" autocomplete="off" style="text-transform:uppercase">
+          </label>
+        </div>
         <p class="muted">💵 Payment is cash at the cashier. You'll get an order number after confirming.</p>
         <div class="row">
           <button class="btn lg" data-act="back">← Edit</button>
@@ -383,13 +397,14 @@ function OrderView(mode) {
   }
 
   function doneScreen() {
-    const o = v.placed;
+    const o = findOrder(v.placed.id) || v.placed;
     return `
       <div class="page"><div class="card confirm">
         <div class="muted" style="font-size:18px">Your order number</div>
         <div class="big-number num">${o.code}</div>
-        <h2>Please pay ${peso(o.total)} at the cashier</h2>
+        ${o.customerId ? `<div class="muted">ID ${esc(o.customerId)}</div>` : ''}
         <p class="muted">Tell the cashier your number. When your food is ready, your number moves to <b>Ready for Pickup</b> on the display screen.</p>
+        ${progress(o)}
         <table class="tbl" style="margin:16px 0">${o.items.map((i) => `<tr><td>${i.qty} × ${esc(i.name)}</td><td class="r num">${peso(i.qty * i.price)}</td></tr>`).join('')}</table>
         <div class="row">
           <button class="btn lg" data-act="print">🖨️ Print ticket</button>
@@ -450,7 +465,7 @@ function OrderView(mode) {
         try {
           const order = await api('/api/orders', {
             method: 'POST',
-            body: { source: mode, items: c.lines().map((l) => ({ id: l.item.id, qty: l.qty })), strand: v.data.strand, startedAt: v.startedAt },
+            body: { source: mode, items: c.lines().map((l) => ({ id: l.item.id, qty: l.qty })), customerId: v.data.customerId, code: v.data.code, startedAt: v.startedAt },
           });
           if (kiosk) {
             Object.assign(v, { placed: order, step: 'done', doneAt: Date.now() });
@@ -494,19 +509,13 @@ function TrackView([id]) {
 
   function detail(o) {
     if (!o) return `<div class="card pad empty">Order not found. Order numbers reset every day.<br><br><a href="#/track">Track another order</a></div>`;
-    const idx = ['received', 'preparing', 'ready', 'completed'].indexOf(o.status);
-    const ahead = todayOrders().filter((x) => ['received', 'preparing'].includes(x.status) && x.createdAt < o.createdAt).length;
-    const steps = ['Order received', 'Preparing', 'Ready for pickup', 'Claimed'];
     return `
       <div class="card pad stack" style="text-align:center">
         <div class="muted">Order number</div>
         <div class="big-number num" style="margin:0">${o.code}</div>
+        ${o.customerId ? `<div class="muted">ID ${esc(o.customerId)}</div>` : ''}
         <div>${statusBadge(o)} ${payBadge(o)}</div>
-        ${o.status === 'cancelled' ? '<p>This order was cancelled. Please ask the cashier.</p>' : `
-          <div class="steps">${steps.map((s, i) => `<div class="step ${i <= idx ? 'done' : ''}"><span class="dot">${i < idx ? '✓' : i + 1}</span>${s}</div>`).join('')}</div>
-          ${o.status === 'ready' ? '<h2 style="color:var(--ok)">Your food is ready — claim it at the counter!</h2>' : ''}
-          ${['received', 'preparing'].includes(o.status) ? `<p class="muted">${ahead ? `${ahead} order${ahead > 1 ? 's' : ''} ahead of you` : "You're next in line"}</p>` : ''}
-          ${!o.paid ? `<p><b>Please pay ${peso(o.total)} at the cashier.</b></p>` : ''}`}
+        ${progress(o)}
       </div>
       <div class="card pad">
         <h3 style="margin-bottom:8px">Order details</h3>
@@ -526,7 +535,7 @@ function TrackView([id]) {
           ${id ? detail(findOrder(id)) : `
             <form class="card pad stack" data-submit="lookup">
               <h2>Track your order</h2>
-              <div class="row"><input id="code" class="input" inputmode="numeric" placeholder="Order number, e.g. 012" data-bind="code" value="${esc(v.data.code)}" autocomplete="off"><button class="btn primary">Track</button></div>
+              <div class="row"><input id="code" class="input" placeholder="Order number, e.g. 012" data-bind="code" value="${esc(v.data.code)}" autocomplete="off"><button class="btn primary">Track</button></div>
             </form>`}
           ${canNotify && my.length ? '<button class="btn block" data-act="notify">🔔 Notify me when my order is ready</button>' : ''}
           ${my.length ? `<div class="card pad"><h3 style="margin-bottom:8px">My orders today</h3>
@@ -539,7 +548,7 @@ function TrackView([id]) {
     actions: {
       lookup() {
         const q = v.data.code.trim();
-        const o = todayOrders().find((x) => x.code === q || x.number === Number(q));
+        const o = q && todayOrders().find((x) => codeMatches(x, q));
         if (!o) return toast('No order with that number today', true);
         location.hash = `#/track/${o.id}`;
       },
@@ -557,7 +566,7 @@ function PosView() {
   const c = cartModel(v);
   const cashButtons = [20, 50, 100, 200, 500, 1000];
 
-  const matches = (o, q) => !q || o.code.includes(q) || o.number === Number(q);
+  const matches = (o, q) => !q || o.code.includes(q.toUpperCase()) || codeMatches(o, q);
   function listFor(filter) {
     const all = todayOrders();
     if (filter === 'unpaid') return all.filter((o) => !o.paid && o.status !== 'cancelled');
@@ -584,7 +593,7 @@ function PosView() {
       <div class="card pad stack">
         <div class="row between wrap">
           <div><div class="muted">Order</div><div class="num" style="font-size:44px;font-weight:800;line-height:1">${o.code}</div></div>
-          <div style="text-align:right">${statusBadge(o)} ${payBadge(o)}<div class="muted" style="font-size:13px;margin-top:4px">${SOURCE_LABEL[o.source]} · ${timeOf(o.createdAt)}${o.strand ? ' · ' + esc(o.strand) : ''}</div></div>
+          <div style="text-align:right">${statusBadge(o)} ${payBadge(o)}<div class="muted" style="font-size:13px;margin-top:4px">${SOURCE_LABEL[o.source]} · ${timeOf(o.createdAt)}${custId(o)}</div></div>
         </div>
         <table class="tbl">${o.items.map((i) => `<tr><td>${i.qty} × ${esc(i.name)}</td><td class="r num">${peso(i.qty * i.price)}</td></tr>`).join('')}</table>
         <div class="total-row num"><span>Total</span><span>${peso(o.total)}</span></div>
@@ -619,7 +628,7 @@ function PosView() {
     return `
       <div class="pos-layout">
         <div class="stack">
-          <form data-submit="pickFirst"><input id="posq" class="input" style="font-size:20px" inputmode="numeric" placeholder="Order no. ↵" data-bind="q" value="${esc(v.data.q)}" autocomplete="off"></form>
+          <form data-submit="pickFirst"><input id="posq" class="input" style="font-size:20px" placeholder="Order no. ↵" data-bind="q" value="${esc(v.data.q)}" autocomplete="off"></form>
           <div class="chips">
             ${[['unpaid', 'Unpaid'], ['ready', 'Ready'], ['all', 'All today']].map(([k, l]) => `<button class="chip ${v.filter === k ? 'active' : ''}" data-act="filter" data-k="${k}">${l} (${counts[k]})</button>`).join('')}
           </div>
@@ -627,7 +636,7 @@ function PosView() {
             ${list.map((o) => `
               <button class="order-row ${v.sel === o.id ? 'active' : ''}" data-act="sel" data-id="${o.id}">
                 <span class="code num">${o.code}</span>
-                <span class="grow"><b class="num">${peso(o.total)}</b><br><span class="muted" style="font-size:12px">${SOURCE_LABEL[o.source]} · ${timeOf(o.createdAt)}</span></span>
+                <span class="grow"><b class="num">${peso(o.total)}</b><br><span class="muted" style="font-size:12px">${SOURCE_LABEL[o.source]} · ${timeOf(o.createdAt)}${custId(o)}</span></span>
                 <span style="text-align:right">${payBadge(o)}<br>${statusBadge(o)}</span>
               </button>`).join('') || '<div class="empty">No orders here.</div>'}
           </div>
@@ -812,7 +821,7 @@ function KitchenView() {
                         <span style="text-align:right">${payBadge(o)}<br><span class="muted num age" data-since="${status === 'ready' ? o.readyAt : o.createdAt}" data-late="${status === 'ready' ? '' : 10}">${mmss(now() - (status === 'ready' ? o.readyAt : o.createdAt))}</span></span>
                       </div>
                       <ul>${o.items.map((i) => `<li><b>${i.qty}×</b> ${esc(i.name)}</li>`).join('')}</ul>
-                      <div class="muted" style="font-size:12px;margin-bottom:8px">${SOURCE_LABEL[o.source]} · placed ${timeOf(o.createdAt)}</div>
+                      <div class="muted" style="font-size:12px;margin-bottom:8px">${SOURCE_LABEL[o.source]} · placed ${timeOf(o.createdAt)}${custId(o)}</div>
                       ${label ? `<div class="row">
                         ${status === 'preparing' ? `<button class="btn sm" data-act="set" data-id="${o.id}" data-s="received" title="Move back">↩</button>` : ''}
                         <button class="btn ${cls} block" data-act="set" data-id="${o.id}" data-s="${next}">${label}</button></div>`
@@ -847,7 +856,7 @@ function DisplayView() {
           ready.add(o.id);
           flashUntil[o.id] = Date.now() + 4000;
           beep(880, 0.18, 3);
-          say(`Order ${o.number} is ready for pickup`);
+          say(`Order ${o.code.replace(/^0+(?=\d)/, '')} is ready for pickup`);
         }
       }
     },
@@ -880,7 +889,7 @@ function DisplayView() {
 function AdminView() {
   const blankItem = { mf_id: '', mf_name: '', mf_category: 'Meals', mf_price: '', mf_emoji: '🍽️', mf_desc: '' };
   const v = {
-    tab: 'research',
+    tab: 'menu',
     research: null,
     queue: 0,
     data: { ...blankItem, q_note: '', t_note: '', s_name: '', s_pin: '' },
@@ -1056,9 +1065,9 @@ function AdminView() {
     const span = (a, b) => (a && b ? fmt((b - a) / 60000) : '—');
     return `
       <div class="card scroll-x"><table class="tbl">
-        <thead><tr><th>No.</th><th>Placed</th><th>Source</th><th>Group</th><th>Items</th><th class="r">Total</th><th>Status</th><th class="r">Txn min</th><th class="r">Wait→ready</th><th></th></tr></thead>
+        <thead><tr><th>No.</th><th>Placed</th><th>Source</th><th>Customer ID</th><th>Items</th><th class="r">Total</th><th>Status</th><th class="r">Txn min</th><th class="r">Wait→ready</th><th></th></tr></thead>
         <tbody>${list.map((o) => `<tr>
-          <td class="num"><b>${o.code}</b></td><td class="num">${timeOf(o.createdAt)}</td><td>${SOURCE_LABEL[o.source]}</td><td>${esc(o.strand) || '—'}</td>
+          <td class="num"><b>${o.code}</b></td><td class="num">${timeOf(o.createdAt)}</td><td>${SOURCE_LABEL[o.source]}</td><td>${esc(o.customerId) || '—'}</td>
           <td style="font-size:13px">${o.items.map((i) => `${i.qty}× ${esc(i.name)}`).join(', ')}</td>
           <td class="r num">${peso(o.total)}</td><td>${statusBadge(o)} ${payBadge(o)}</td>
           <td class="r num">${span(o.startedAt, o.createdAt)}</td><td class="r num">${span(o.createdAt, o.readyAt)}</td>
@@ -1069,8 +1078,8 @@ function AdminView() {
 
   // ---- settings tab ----
   function settingsTab() {
-    const base = location.origin + location.pathname;
-    const links = [['Kiosk', 'kiosk'], ['Phone ordering (Android app)', 'order'], ['Cashier POS', 'pos'], ['Preparation display', 'kitchen'], ['Public display', 'display']];
+    const base = location.origin + '/';
+    const links = [['Public ordering app (give this link to students)', 'app'], ['Kiosk', '#/kiosk'], ['Cashier POS', 'pos'], ['Preparation display', '#/kitchen'], ['Public display', '#/display']];
     return `
       <div class="grid-2">
         <form class="card pad stack" data-submit="saveSettings">
@@ -1083,7 +1092,7 @@ function AdminView() {
         <div class="card pad stack">
           <h3>Open on each device</h3>
           <p class="muted" style="margin:0">Open these links on each device. If you run the server on a laptop instead of Vercel, devices must be on the same Wi-Fi and use the laptop's network address shown in the terminal, not <code>localhost</code>.</p>
-          ${links.map(([l, r]) => `<div><div class="muted" style="font-size:13px">${l}</div><code style="word-break:break-all">${esc(base)}#/${r}</code></div>`).join('')}
+          ${links.map(([l, r]) => `<div><div class="muted" style="font-size:13px">${l}</div><code style="word-break:break-all">${esc(base)}${r}</code></div>`).join('')}
         </div>
       </div>`;
   }
@@ -1096,7 +1105,7 @@ function AdminView() {
     },
     destroy() { clearInterval(refresh); },
     render() {
-      const tabs = [['research', '📊 Research'], ['menu', '🍽️ Menu'], ['orders', '🧾 Orders today'], ['settings', '⚙️ Settings']];
+      const tabs = [['menu', '🍽️ Menu'], ['research', '📊 Research'], ['orders', '🧾 Orders today'], ['settings', '⚙️ Settings']];
       const body = { research: researchTab, menu: menuTab, orders: ordersTab, settings: settingsTab }[v.tab]();
       return `
         <div class="page">
@@ -1215,7 +1224,7 @@ function AdminView() {
       logout() {
         S.pin = '';
         sessionStorage.removeItem('pin');
-        location.hash = '#/';
+        render();
       },
     },
   };
@@ -1233,22 +1242,23 @@ const ROUTES = {
   display: () => DisplayView(),
   admin: () => AdminView(),
 };
-const STAFF_NAV = [['pos', 'Cashier POS'], ['kitchen', 'Kitchen'], ['display', 'Display'], ['kiosk', 'Kiosk'], ['admin', 'Admin']];
+// Each device shows only its own screen: staff screens get no links to other screens.
 const PUBLIC_NAV = [['order', 'Order'], ['track', 'Track order']];
 
 function setChrome() {
   const bar = document.getElementById('topbar');
   const fullscreen = S.route === 'kiosk' || S.route === 'display';
   bar.hidden = fullscreen;
-  const nav = ['order', 'track'].includes(S.route) ? PUBLIC_NAV : S.route ? STAFF_NAV : [];
-  document.getElementById('nav').innerHTML = nav.map(([r, l]) => `<a href="#/${r}" class="${r === S.route ? 'active' : ''}">${l}</a>`).join('');
+  const isPublic = ['order', 'track'].includes(S.route);
+  document.getElementById('nav').innerHTML = (isPublic ? PUBLIC_NAV : []).map(([r, l]) => `<a href="#/${r}" class="${r === S.route ? 'active' : ''}">${l}</a>`).join('');
+  document.querySelector('#topbar .brand').href = LOCKED ? `#/${LOCKED[0]}` : isPublic ? '#/order' : '#/';
   if (S.state) document.getElementById('brand-name').textContent = S.state.settings.canteenName;
 }
 
 function route() {
   const [name = '', ...args] = location.hash.replace(/^#\/?/, '').split('/');
   S.view?.destroy?.();
-  S.route = ROUTES[name] ? name : '';
+  S.route = LOCKED ? (LOCKED.includes(name) ? name : LOCKED[0]) : ROUTES[name] ? name : '';
   S.view = ROUTES[S.route](args);
   setChrome();
   window.scrollTo(0, 0);

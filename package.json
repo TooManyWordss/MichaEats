@@ -1,0 +1,13 @@
+{
+  "name": "micheats-pos",
+  "version": "1.0.0",
+  "description": "MichEats — kiosk-based food ordering and POS system for the SMCII Basic Education Department canteen",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
